@@ -60,6 +60,7 @@
 #include "linker_dlwarning.h"
 #include "linker_main.h"
 #include "linker_namespaces.h"
+#include "linker_non_pie.h"
 #include "linker_sleb128.h"
 #include "linker_phdr.h"
 #include "linker_relocs.h"
@@ -2579,10 +2580,10 @@ bool soinfo::relocate(const VersionTracker& version_tracker, ElfRelIteratorT&& r
 
     const ElfW(Sym)* s = nullptr;
     soinfo* lsi = nullptr;
+    const version_info* vi = nullptr;
 
     if (sym != 0) {
       sym_name = get_string(symtab_[sym].st_name);
-      const version_info* vi = nullptr;
 
       if (!lookup_version_info(version_tracker, sym, sym_name, &vi)) {
         return false;
@@ -2893,6 +2894,48 @@ bool soinfo::relocate(const VersionTracker& version_tracker, ElfRelIteratorT&& r
          * R_ARM_COPY may only appear in executable objects where e_type is
          * set to ET_EXEC.
          */
+        if (allow_non_pie(get_realpath())) {
+          if ((flags_ & FLAG_EXE) == 0) {
+            DL_ERR("%s R_ARM_COPY relocations only supported for ET_EXEC", get_realpath());
+            return false;
+          }
+
+          count_relocation(kRelocCopy);
+          MARK(rel->r_offset);
+          TRACE_TYPE(RELO, "RELO %08x <- %zd @ %08x %s",
+                     reloc, s->st_size, sym_addr, sym_name);
+
+          if (reloc == sym_addr) {
+            const ElfW(Sym)* src = nullptr;
+
+            if (!soinfo_do_lookup(nullptr, sym_name, vi, &lsi,
+                                  global_group, local_group, &src)) {
+              DL_ERR("%s R_ARM_COPY relocation source cannot be resolved", get_realpath());
+              return false;
+            }
+
+            if (lsi->has_DT_SYMBOLIC) {
+              DL_ERR("%s invalid R_ARM_COPY relocation against DT_SYMBOLIC shared library %s",
+                     get_realpath(), lsi->soname_);
+              return false;
+            }
+
+            if (s->st_size < src->st_size) {
+              DL_ERR("%s R_ARM_COPY relocation size mismatch (%zd < %zd)",
+                     get_realpath(), s->st_size, src->st_size);
+              return false;
+            }
+
+            memcpy(reinterpret_cast<void*>(reloc),
+                   reinterpret_cast<void*>(src->st_value + lsi->load_bias),
+                   src->st_size);
+            break;
+          }
+
+          DL_ERR("%s R_ARM_COPY relocation target cannot be resolved", get_realpath());
+          return false;
+        }
+
         DL_ERR("%s R_ARM_COPY relocations are not supported", get_realpath());
         return false;
 #elif defined(__i386__)

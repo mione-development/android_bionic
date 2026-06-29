@@ -32,6 +32,7 @@
 #include "linker_cfi.h"
 #include "linker_gdb_support.h"
 #include "linker_globals.h"
+#include "linker_non_pie.h"
 #include "linker_phdr.h"
 #include "linker_utils.h"
 
@@ -316,7 +317,7 @@ static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args) {
   ElfW(Ehdr)* elf_hdr = reinterpret_cast<ElfW(Ehdr)*>(si->base);
 
   // We haven't supported non-PIE since Lollipop for security reasons.
-  if (elf_hdr->e_type != ET_DYN) {
+  if (elf_hdr->e_type != ET_DYN && !allow_non_pie(executable_path)) {
     // We don't use __libc_fatal here because we don't want a tombstone: it's
     // been several years now but we still find ourselves on app compatibility
     // investigations because some app's trying to launch an executable that
@@ -329,6 +330,10 @@ static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args) {
                      "position-independent executables (-fPIE).\n",
                      g_argv[0]);
     exit(EXIT_FAILURE);
+  }
+
+  if (elf_hdr->e_type != ET_DYN) {
+    DL_WARN("Non position independent executable (non PIE) allowed: %s", executable_path);
   }
 
   // Use LD_LIBRARY_PATH and LD_PRELOAD (but only if we aren't setuid/setgid).
